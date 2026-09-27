@@ -71,9 +71,14 @@ def _yue2_python() -> tuple[str, list[str]]:
 
 
 def write_request(path: Path, *, style: str, lyrics: str, seed: int | None = None,
-                  abc: str | None = None, cot: str = "melody") -> Path:
-    """Write a YuE2 request JSON. `style`/`lyrics` are free text; no impl notes."""
-    req = {"id": Path(path).stem, "style": style, "lyrics": lyrics, "cot": cot}
+                  abc: str | None = None, cot: str = "melody", song_id: str = "song") -> Path:
+    """Write a YuE2 request JSON. `style`/`lyrics` are free text; no impl notes.
+
+    YuE2's `save_artifacts` nests outputs under `<output>/<id>/`, so the id names
+    the artifact directory — default it to something meaningful, not the request
+    filename.
+    """
+    req = {"id": song_id, "style": style, "lyrics": lyrics, "cot": cot}
     if abc is not None:
         req["abc"] = abc
     if seed is not None:
@@ -108,17 +113,23 @@ def generate(request: Path, abc_file: Path, output: Path, *, cot: str = "melody"
         cmd += ["--seed", str(seed)]
 
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # YuE2's save_artifacts nests everything under <output>/<request id>/ — locate
+    # the audio wherever it actually landed instead of assuming one level.
     audio = output / "audio.flac"
+    if not audio.exists():
+        found = sorted(output.rglob("audio.flac"))
+        audio = found[0] if found else audio
+    result_json = audio.parent / "result.json" if audio.exists() else output / "result.json"
     manifest = {
         "ok": proc.returncode == 0 and audio.exists(),
         "interpreter": exe,
         "command": cmd,
         "returncode": proc.returncode,
         "audio": str(audio) if audio.exists() else None,
+        "artifacts_dir": str(audio.parent) if audio.exists() else str(output),
         "output_dir": str(output),
         "stderr_tail": proc.stderr.strip()[-1200:],
     }
-    result_json = output / "result.json"
     if result_json.exists():
         try:
             manifest["result"] = json.loads(result_json.read_text(encoding="utf-8"))

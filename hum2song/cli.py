@@ -122,7 +122,8 @@ def cmd_song(args) -> int:
         raise SystemExit("lyrics are required: --lyrics TEXT or --lyrics-file PATH (YuE2 sings words)")
 
     request = songmod.write_request(run / "request.json", style=style, lyrics=lyrics,
-                                    seed=args.seed, cot=args.cot)
+                                    seed=args.seed, cot=args.cot,
+                                    song_id=(run.name or "song"))
     out_dir = Path(args.song_output) if args.song_output else run / f"song-{int(time.time())}"
     try:
         result = songmod.generate(request, abc_path, out_dir, cot=args.cot,

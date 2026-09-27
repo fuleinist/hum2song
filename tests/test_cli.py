@@ -91,4 +91,51 @@ def test_request_json_shape(tmp_path):
     data = json.loads(req.read_text(encoding="utf-8"))
     assert data["cot"] == "melody" and data["seed"] == 42
     assert data["style"].startswith("dream pop")
+    assert data["id"] == "song"  # YuE2 nests artifacts under <output>/<id>/
     assert "abc" not in data  # ABC travels via --abc-file, not duplicated in the request
+
+
+def test_generate_finds_audio_nested_under_the_request_id(tmp_path, monkeypatch):
+    # Regression: YuE2's save_artifacts writes <output>/<id>/audio.flac, and an
+    # earlier version looked only at <output>/audio.flac — reporting ok=False for
+    # a generation that had actually succeeded. The fake subprocess writes the
+    # nested layout; generate must find it.
+    from hum2song import song as songmod
+
+    out = tmp_path / "song-out"
+    nested = out / "run1"
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        nested.mkdir(parents=True)
+        (nested / "audio.flac").write_bytes(b"fake-flac")
+        (nested / "result.json").write_text(json.dumps({"truncated": {}}), encoding="utf-8")
+        return _Proc()
+
+    monkeypatch.setattr(songmod.subprocess, "run", fake_run)
+    monkeypatch.setattr(songmod, "_yue2_python", lambda: ("python", []))
+    result = songmod.generate(tmp_path / "request.json", tmp_path / "melody.abc", out)
+    assert result["ok"] is True
+    assert result["audio"].endswith(str(nested / "audio.flac").replace("\\", "/")) or \
+           result["audio"] == str(nested / "audio.flac")
+    assert result["artifacts_dir"] == str(nested)
+    assert result["result"] == {"truncated": {}}
+
+
+def test_generate_reports_failure_without_audio(tmp_path, monkeypatch):
+    from hum2song import song as songmod
+
+    class _Proc:
+        returncode = 1
+        stderr = "CUDA out of memory"
+
+    monkeypatch.setattr(songmod.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(songmod, "_yue2_python", lambda: ("python", []))
+    result = songmod.generate(tmp_path / "request.json", tmp_path / "melody.abc",
+                              tmp_path / "out2")
+    assert result["ok"] is False and result["audio"] is None
+    assert "CUDA out of memory" in result["stderr_tail"]
+    assert "earlier stages are unaffected" in result["error"]
