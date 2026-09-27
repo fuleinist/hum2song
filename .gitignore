@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# Model weights and audio never belong in git
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.flac
+*.wav
+*.mp3
+*.webm
+*.m4a
+*.npy
+
+# Run artifacts and recordings — local only
+work/
+recordings/
+run*/
+song-*/
+outputs/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
