@@ -383,7 +383,7 @@ def validate(abc: str, *, meter: str = "4/4", unit: int = UNIT) -> list[str]:
 def _tokens(line: str):
     """Yield `(text, sixteenths)` for each note or rest in a measure line."""
     body = line.split("|")[0]
-    for m in re.finditer(r"([_=^]*(?:[A-Ga-g]|z))([0-9]*/?[0-9]*)?", body):
+    for m in re.finditer(r"([_=^]*(?:[A-G],*|[a-g]'*|z))([0-9]*/?[0-9]*)?", body):
         head, dur = m.group(1), m.group(2) or ""
         if head[-1] == "z":
             yield "z" + dur, _parse_duration(dur)
