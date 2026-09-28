@@ -1,5 +1,7 @@
 # hum2song
 
+[![CI](https://github.com/fuleinist/hum2song/actions/workflows/ci.yml/badge.svg)](https://github.com/fuleinist/hum2song/actions/workflows/ci.yml)
+
 Hum a melody. Get a song.
 
 ```
@@ -160,6 +162,23 @@ traceback or a fake success.
   non-commercial use.
 
 Full list: [docs/honest-limits.md](docs/honest-limits.md).
+
+## Tests
+
+CI runs the suite on **Ubuntu and Windows**, on **Python 3.10 and 3.12**, for every
+push to `main` and every pull request
+([workflow](.github/workflows/ci.yml)). Nothing in the suite needs a GPU or a YuE2
+install: the transcription side is CPU-only, and synthesis is deliberately kept in a
+separate environment.
+
+```bash
+pip install -e ".[test]"
+pytest -q
+```
+
+One test in `tests/test_melody.py` runs pyin end to end, so the suite takes roughly
+25 s on CPU rather than a fraction of a second. The rest construct `Melody` objects
+by hand, so a failure names the notation bug instead of a tracking wobble.
 
 ## Credits
 

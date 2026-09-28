@@ -1,0 +1,41 @@
+name: CI
+
+# Basic gate: install the package with its test extra and run the suite. The
+# transcription side runs on CPU, so this needs no GPU and no YuE2 install — the
+# synthesis stage is a separate environment and is not exercised here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is included on purpose: this tool targets Windows first, and the
+        # YuE2 backend note in the README exists because Windows behaves differently.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Test
+        run: pytest -q
