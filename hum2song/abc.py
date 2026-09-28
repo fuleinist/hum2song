@@ -113,15 +113,122 @@ def write(score: Score, path: Path | str) -> Path:
     return path
 
 
+# Circle of fifths, used only to respell a key signature after a transpose.
+# Moving by one semitone is seven steps around the circle; a result past seven
+# accidentals is written as its enharmonic equivalent so the signature stays legible.
+_FIFTHS = {
+    "Cb": -7, "Gb": -6, "Db": -5, "Ab": -4, "Eb": -3, "Bb": -2, "F": -1,
+    "C": 0, "G": 1, "D": 2, "A": 3, "E": 4, "B": 5, "F#": 6, "C#": 7,
+}
+_FIFTHS_BY_POS = {v: k for k, v in _FIFTHS.items()}
+
+# A band narrower than an octave cannot be reached by octave displacement alone,
+# so a fold into one would never terminate. This is a correctness limit, not taste.
+_MIN_BAND = 12
+
+
+_NOTE_RE = re.compile(r"^([A-Ga-g])([#b]?)(-?\d+)$")
+
+
+def parse_pitch(text: str) -> int:
+    """MIDI number for `"60"`, `"D4"`, `"F#5"` or `"Bb3"`.
+
+    Note names are the friendlier half of this: a register is easier to state as
+    `D4-G5` than as `62-79`. C4 is 60, as in the rest of the module.
+    """
+    text = text.strip()
+    if re.fullmatch(r"-?\d+", text):
+        midi = int(text)
+        if not 0 <= midi <= 127:
+            raise ValueError(f"MIDI number out of range: {text!r}")
+        return midi
+    match = _NOTE_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"expected a MIDI number (0-127) or a note name like D4; got {text!r}")
+    letter, accidental, octave = match.group(1).upper(), match.group(2), int(match.group(3))
+    semitone = _LETTER_PC[letter] + {"#": 1, "b": -1}.get(accidental, 0)
+    midi = (octave + 1) * 12 + semitone
+    if not 0 <= midi <= 127:
+        raise ValueError(f"note {text!r} is outside MIDI 0-127")
+    return midi
+
+
+def transpose_key(key: str, semitones: int) -> str:
+    """Shift a key signature by an interval, keeping a standard spelling.
+
+    `C` up five semitones is `F`; up two it is `D`; up one it is `Db` rather than
+    `C#`. Whole-octave shifts return the key unchanged, which is what makes an
+    octave transpose safe to pass through here.
+    """
+    pos = _FIFTHS.get(key)
+    if pos is None:
+        raise ValueError(f"unknown key {key!r}; expected one of {sorted(_FIFTHS)}")
+    new_pos = (pos + 7 * semitones) % 12
+    if new_pos > 6:
+        new_pos -= 12
+    return _FIFTHS_BY_POS[new_pos]
+
+
+def fold_into_band(midi: int, band: tuple[int, int]) -> int:
+    """Displace a pitch by octaves until it lies inside `band` (inclusive)."""
+    lo, hi = band
+    while midi > hi:
+        midi -= 12
+    while midi < lo:
+        midi += 12
+    return midi
+
+
+def apply_register(notes, *, transpose: int = 0, vocal_band: tuple[int, int] | None = None):
+    """Return `notes` moved into a target register.
+
+    `transpose` shifts every note by the same interval, so the melody keeps its
+    contour exactly. `vocal_band` then folds whatever is still outside back in by
+    octaves, and folding *does* alter the contour of the notes it touches — that is
+    the honest trade. A band wide enough to hold the melody needs no folding and
+    therefore changes nothing; a narrow one is what buys range control at the cost
+    of the occasional octave jump.
+
+    This controls the *written* register only. It does not select, stabilise or
+    otherwise constrain YuE2's singer — see docs/honest-limits.md.
+    """
+    if vocal_band is not None:
+        lo, hi = vocal_band
+        if not 0 <= lo < hi <= 127:
+            raise ValueError(
+                f"vocal_band must be (lo, hi) with 0 <= lo < hi <= 127; got {vocal_band!r}")
+        if hi - lo < _MIN_BAND:
+            raise ValueError(
+                f"vocal_band {vocal_band!r} spans {hi - lo} semitones; a band narrower "
+                f"than {_MIN_BAND} cannot be reached by octave displacement")
+
+    out = []
+    for note in notes:
+        midi = note.midi + transpose
+        if vocal_band is not None:
+            midi = fold_into_band(midi, vocal_band)
+        if not 0 <= midi <= 127:
+            raise ValueError(
+                f"transpose {transpose:+d} puts {note.name} outside MIDI 0-127")
+        out.append(note if midi == note.midi else dataclasses.replace(note, midi=midi))
+    return out
+
+
 def from_melody(melody, *, title: str = "", sections: list[tuple[str, list[int]]] | None = None,
                 key: str | None = None, meter: str | None = None,
-                tempo: float | None = None) -> Score:
+                tempo: float | None = None, transpose: int = 0,
+                vocal_band: tuple[int, int] | None = None) -> Score:
     """Notate a `melody.Melody` as an ABC `Score`.
 
     `sections` splits the note list into named parts — `[("verse", [0, 7]),
     ("chorus", [8, 15])]` as inclusive index pairs. Without it the whole melody is
     one `% melody` section, which is the honest default: nothing here can hear a
     chorus.
+
+    `transpose` and `vocal_band` set the register the melody is written in, so a
+    hum tracked in a low voice can be notated for a higher one. The key signature
+    moves with the transpose.
     """
     notes = melody.notes
     if not notes:
@@ -136,6 +243,10 @@ def from_melody(melody, *, title: str = "", sections: list[tuple[str, list[int]]
         raise ValueError(f"meter must be 2/4, 3/4, 4/4 or 6/8; got {meter!r}")
 
     warnings = list(melody.warnings)
+    if transpose or vocal_band:
+        notes = apply_register(notes, transpose=transpose, vocal_band=vocal_band)
+        if transpose % 12:
+            key = transpose_key(key, transpose)
     beats_per_measure = _beats_per_measure(meter)
     sixteenths_per_measure = int(round(beats_per_measure * UNIT / 4))
 

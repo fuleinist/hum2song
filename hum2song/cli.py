@@ -40,6 +40,22 @@ def _write_manifest(run: Path, updates: dict) -> None:
     (run / MANIFEST).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def _vocal_band(text: str) -> tuple[int, int]:
+    """argparse type for `--vocal-band LO-HI`, in note names or MIDI numbers."""
+    parts = text.split("-")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(
+            f"expected LO-HI, e.g. D4-G5 or 62-79; got {text!r}")
+    try:
+        lo, hi = (abcmod.parse_pitch(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if lo >= hi:
+        raise argparse.ArgumentTypeError(
+            f"band must ascend: LO={parts[0]} is not below HI={parts[1]}")
+    return (lo, hi)
+
+
 def cmd_record(args) -> int:
     """Serve the zero-dependency browser recorder."""
     from . import record
@@ -83,7 +99,8 @@ def cmd_abc(args) -> int:
     if args.sections and args.sections > 1:
         sections = abcmod.split_sections(mel, args.sections)
     score = abcmod.from_melody(mel, title=args.title or "", sections=sections,
-                               key=args.key, meter=args.meter, tempo=args.tempo)
+                               key=args.key, meter=args.meter, tempo=args.tempo,
+                               transpose=args.transpose, vocal_band=args.vocal_band)
     problems = abcmod.validate(abcmod.render(score), meter=score.meter)
     if problems:
         print("the generated ABC failed its own validation:", file=sys.stderr)
@@ -155,7 +172,8 @@ def cmd_all(args) -> int:
     if cmd_melody(ns):
         return 1
     ns = argparse.Namespace(output=args.output, title=args.title, sections=args.sections,
-                            key=args.key, meter=args.meter, tempo=args.tempo)
+                            key=args.key, meter=args.meter, tempo=args.tempo,
+                            transpose=args.transpose, vocal_band=args.vocal_band)
     if cmd_abc(ns):
         return 1
     ns = argparse.Namespace(output=args.output, style=args.style, lyrics=args.lyrics,
@@ -190,6 +208,12 @@ def main(argv=None) -> int:
     a.add_argument("--meter", choices=("2/4", "3/4", "4/4", "6/8"), help="override the estimated meter")
     a.add_argument("--tempo", type=float, help="override the estimated tempo")
     a.add_argument("--sections", type=int, default=1, help="split into N equal named sections")
+    a.add_argument("--transpose", type=int, default=0,
+                   help="semitones to shift the notated melody; keeps its contour "
+                        "and moves the key signature with it")
+    a.add_argument("--vocal-band", type=_vocal_band, default=None, metavar="LO-HI",
+                   help="fold the melody into this register, e.g. D4-G5 or 62-79 "
+                        "(at least an octave wide); alters the contour where it folds")
     a.set_defaults(fn=cmd_abc)
 
     s = sub.add_parser("song", help="ABC → song via a YuE2 install (separate environment)")
@@ -213,6 +237,8 @@ def main(argv=None) -> int:
     al.add_argument("--meter", choices=("2/4", "3/4", "4/4", "6/8"))
     al.add_argument("--tempo", type=float)
     al.add_argument("--sections", type=int, default=1)
+    al.add_argument("--transpose", type=int, default=0)
+    al.add_argument("--vocal-band", type=_vocal_band, default=None, metavar="LO-HI")
     al.add_argument("--style", required=True)
     al.add_argument("--lyrics")
     al.add_argument("--lyrics-file", type=Path)

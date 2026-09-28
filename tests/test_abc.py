@@ -138,3 +138,68 @@ def test_write_and_read_round_trip(tmp_path):
     path = A.write(A.from_melody(mel, title="round"), tmp_path / "out.abc")
     assert A.read(path) == A.render(A.from_melody(mel, title="round"))
     assert path.read_bytes().count(b"\r") == 0  # LF, like every ABC consumer expects
+
+
+def test_parse_pitch_accepts_midi_numbers_and_note_names():
+    assert A.parse_pitch("60") == 60
+    assert A.parse_pitch("C4") == 60
+    assert A.parse_pitch("D4") == 62
+    assert A.parse_pitch("F#5") == 78
+    assert A.parse_pitch("Bb3") == 58
+    for bad in ("H4", "200", "", "D"):
+        with pytest.raises(ValueError):
+            A.parse_pitch(bad)
+
+
+def test_transpose_key_walks_the_circle_of_fifths():
+    assert A.transpose_key("C", 5) == "F"     # a fourth up
+    assert A.transpose_key("C", 2) == "D"
+    assert A.transpose_key("C", 1) == "Db"    # the standard spelling, not C#
+    assert A.transpose_key("C", 12) == "C"    # an octave changes nothing
+    assert A.transpose_key("Eb", 5) == "Ab"
+    assert A.transpose_key("A", 5) == "D"
+
+
+def test_transpose_keeps_every_interval():
+    mel = _melody([(60, 0, 1), (64, 1, 1), (67, 2, 1), (72, 3, 1)])
+    moved = A.apply_register(mel.notes, transpose=5)
+    assert [n.midi for n in moved] == [65, 69, 72, 77]
+    gaps_before = [b.midi - a.midi for a, b in zip(mel.notes, mel.notes[1:])]
+    gaps_after = [b.midi - a.midi for a, b in zip(moved, moved[1:])]
+    assert gaps_before == gaps_after
+
+
+def test_vocal_band_lands_every_note_inside_and_is_idempotent():
+    # A2 A3 A4 A5 A6 — two octaves either side of a band two octaves wide.
+    mel = _melody([(45, 0, 1), (57, 1, 1), (69, 2, 1), (81, 3, 1), (93, 4, 1)])
+    folded = A.apply_register(mel.notes, vocal_band=(57, 76))
+    assert all(57 <= n.midi <= 76 for n in folded)
+    assert {n.midi for n in folded} == {57, 69}  # every A lands on A3 or A4
+    again = A.apply_register(folded, vocal_band=(57, 76))
+    assert [n.midi for n in again] == [n.midi for n in folded]
+
+
+def test_a_band_narrower_than_an_octave_is_refused():
+    # Octave displacement cannot reach a sub-octave window, so folding into one
+    # would never terminate. Refuse it rather than hang.
+    mel = _melody([(60, 0, 1)])
+    with pytest.raises(ValueError, match="narrower"):
+        A.apply_register(mel.notes, vocal_band=(60, 70))
+    with pytest.raises(ValueError):
+        A.apply_register(mel.notes, vocal_band=(79, 62))
+
+
+def test_transpose_out_of_midi_range_is_refused():
+    mel = _melody([(120, 0, 1)])
+    with pytest.raises(ValueError, match="outside MIDI"):
+        A.apply_register(mel.notes, transpose=24)
+
+
+def test_transposed_score_moves_the_key_and_still_validates():
+    mel = _melody([(60, 0, 1), (62, 1, 1), (64, 2, 1), (65, 3, 1)], key="C")
+    score = A.from_melody(mel, transpose=5)
+    text = A.render(score)
+    assert score.key == "F" and "K:F" in text
+    assert A.validate(text) == []
+    # The untransposed score is untouched by the new default.
+    assert "K:C" in A.render(A.from_melody(mel))

@@ -90,6 +90,22 @@ Open `run1/melody.abc` in any ABC viewer ([abcjs editor](https://editor.drawthed
 EasyABC) to see and edit the tune. Fix a wrong note as text; it's faster than
 re-humming.
 
+`abc` also sets the **register** the melody is written in — what you want when the
+tune was hummed low and the singer you have in mind sits higher:
+
+```bash
+hum2song abc -o run1/ --transpose 5        # a fourth up; contour kept, key moves with it
+hum2song abc -o run1/ --vocal-band D4-G5   # fold into a register, e.g. an alto lead
+```
+
+`--transpose` shifts every note by the same interval, so the tune's shape is exact
+and the key signature moves with it (`C` up 5 lands on `F`). `--vocal-band` takes
+`LO-HI` as note names or MIDI numbers and folds whatever falls outside back in by
+octaves; that folding **does** alter the contour of the notes it touches, and a band
+must be at least an octave wide, because octave displacement cannot reach a narrower
+window. Neither flag chooses the singer — see
+[docs/honest-limits.md](docs/honest-limits.md).
+
 ### Sing it
 
 ```bash

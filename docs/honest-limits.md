@@ -3,6 +3,25 @@
 What this tool cannot do, written down so nobody has to discover it by debugging
 a bad song at 2 a.m.
 
+## Register is not the singer
+
+`--transpose` and `--vocal-band` control the register the melody is *written* in.
+They do not select, stabilise or constrain YuE2's vocal identity, and YuE2 offers no
+audio-reference argument to pin one — checked against the released pipeline: no
+`singer`, `speaker` or `reference_audio` parameter exists on any entry point.
+
+This was tested rather than assumed. A score spanning C3–C6 across three octaves,
+and the same tune folded into a single C4–C5 band, gave per-section median-f0
+spreads of 1.05x and 1.33x versus **1.99x** — narrowing the written range did not
+make the voice more consistent, and the widest score was the most stable of the
+three. If a generated song appears to change singer between sections, the register
+flags are not the fix. Your levers are the style text, the seed, and take selection.
+
+Measuring it is harder than it sounds: pyin run on a full mix reports the bass
+fundamental, or floors at its own `fmin` and returns that number for every section.
+Per-section f0 measured from a mix is therefore not evidence about the singer —
+separate the vocal first if you need a measurement you can defend.
+
 ## The melody condition is a condition
 
 `cot="melody"` gives YuE2 your ABC as a symbolic plan to *condition* generation
