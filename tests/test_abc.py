@@ -99,6 +99,82 @@ def test_validate_catches_a_broken_measure():
     assert any("does not sum" in p for p in problems)
 
 
+def test_validate_checks_the_ins_voice_as_well_as_vocal():
+    # issue #4: the measure loop walked only `Vocal`, so a malformed Ins bar was clean.
+    mel = _melody([(60, 0, 1), (62, 1, 1), (64, 2, 1), (65, 3, 1)])
+    text = A.render(A.from_melody(mel))
+
+    short = text.replace("Z1|", "A,B,C,|")  # 3 units, not 16
+    assert A.validate(short) == [
+        "measure does not sum to 16 L: units (got 3) [V: Ins measure 1]: A,B,C,"
+    ]
+    long_bar = text.replace("Z1|", "C4C4C4C4C4C4C4C4|")  # 32 units
+    assert A.validate(long_bar) == [
+        "measure does not sum to 16 L: units (got 32) [V: Ins measure 1]: "
+        "C4C4C4C4C4C4C4C4"
+    ]
+    # A bar inside a multi-measure line is named by its position in the line.
+    middle = text.replace("Z1|", "C4D4E4F4|A,B,C,|C4D4E4F4|C4D4E4F4|")
+    assert A.validate(middle) == [
+        "measure does not sum to 16 L: units (got 3) [V: Ins measure 2]: A,B,C,"
+    ]
+
+    # Negative control: a full-measure rest covers the section by design, in
+    # either voice, so it is not a problem.
+    assert A.validate(text) == []
+    assert A.validate(text.replace("Z1|", "Z4|")) == []
+    assert A.validate(text.replace("C4D4E4F4|", "z16|")) == []
+
+
+def test_validate_sums_every_measure_on_a_line_not_just_the_first():
+    # issue #5: a line was cut at the first "|", so only measure 1 was ever summed.
+    mel = _melody([(60, 0, 1), (62, 1, 1), (64, 2, 1), (65, 3, 1)])
+    text = A.render(A.from_melody(mel))
+    good = "C4D4E4F4|"
+    for position in (1, 2, 3, 4):
+        measures = [good] * 4
+        measures[position - 1] = "C4|"  # 4 units, not 16
+        problems = A.validate(text.replace(good, "".join(measures)))
+        assert len(problems) == 1, (position, problems)
+        assert f"[V: Vocal measure {position}]" in problems[0], problems[0]
+        assert "(got 4)" in problems[0], problems[0]
+
+    # Negative controls: a line that adds up in every measure stays clean, whether
+    # the measures hold notes or rests.
+    assert A.validate(text.replace(good, good * 4)) == []
+    assert A.validate(text.replace(good, "z16|z16|z16|z16|")) == []
+
+
+def test_chord_symbols_are_a_mode_not_an_unconditional_error():
+    # issue #6: a chord label was rejected always and then read as melody, so these
+    # lines summed to 23 and 24 instead of 16.
+    mel = _melody([(60, 0, 1), (62, 1, 1), (64, 2, 1), (65, 3, 1)])
+    text = A.render(A.from_melody(mel))
+    for chord in ('"F7"C16|', '"Bb7"C16|'):
+        planted = text.replace("C4D4E4F4|", chord)
+        assert A.validate(planted, chord_free=False) == [], chord
+        # The default keeps today's behaviour: the chord problem, and nothing else.
+        problems = A.validate(planted)
+        assert len(problems) == 1, problems
+        assert "chord" in problems[0], problems[0]
+        assert "does not sum" not in problems[0], problems[0]
+
+    # Negative control: the same measure without a chord label is clean either way.
+    assert A.validate(text.replace("C4D4E4F4|", "C16|")) == []
+    assert A.validate(text.replace("C4D4E4F4|", "C16|"), chord_free=False) == []
+
+
+def test_tokens_read_the_whole_line_and_mask_quoted_spans():
+    # Masking is the same length as the span it replaces, so later onsets stay put.
+    assert list(A._tokens('"F7"C16|z8|z4|')) == [("C16", 16.0), ("z8", 8.0), ("z4", 4.0)]
+    assert list(A._tokens("C4|z8|z4|")) == [("C4", 4.0), ("z8", 8.0), ("z4", 4.0)]
+    # inspect() was counting chord-label letters as notes because of the same bug.
+    mel = _melody([(60, 0, 1), (62, 1, 1), (64, 2, 1), (65, 3, 1)])
+    info = A.inspect(A.render(A.from_melody(mel)).replace("C4D4E4F4|", '"G7"C4D4E4F4|'))
+    assert info["notes"] == 4, info
+    assert any("chord" in p for p in info["problems"]), info
+
+
 def test_sections_must_cover_every_note():
     mel = _melody([(60, i, 1) for i in range(8)])
     with pytest.raises(ValueError, match="unnotated"):

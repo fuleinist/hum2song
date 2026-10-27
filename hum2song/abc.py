@@ -431,13 +431,17 @@ def _abc_to_midi(text: str) -> int | None:
     return (octave + 1) * 12 + pc
 
 
-def validate(abc: str, *, meter: str = "4/4", unit: int = UNIT) -> list[str]:
+def validate(abc: str, *, meter: str = "4/4", unit: int = UNIT,
+             chord_free: bool = True) -> list[str]:
     """Structural checks on ABC text. Returns a list of problems, empty when clean.
 
     This is a notation check, not a musical one: it confirms the file has the shape
-    YuE2's melody condition expects and that every measure adds up. It cannot say
-    whether the tune is good, and a passing validate does not mean the transcription
-    matched what was sung — see `docs/honest-limits.md`.
+    YuE2's melody condition expects, that every measure of `Vocal` and of `Ins` adds
+    up, and — unless `chord_free=False` — that no harmony annotations are present.
+    A score notated with chords is only clean under `chord_free=False`, which is the
+    mode a `cot="full"` score needs. It cannot say whether the tune is good, and a
+    passing validate does not mean the transcription matched what was sung — see
+    `docs/honest-limits.md`.
     """
     problems: list[str] = []
     lines = [l for l in abc.splitlines() if l.strip() and not l.strip().startswith("%")]
@@ -467,7 +471,7 @@ def validate(abc: str, *, meter: str = "4/4", unit: int = UNIT) -> list[str]:
     # inert text, and quoting a chord name in a comment is how examples document
     # what NOT to emit).
     music = "\n".join(l for l in lines if not l.strip().startswith("%"))
-    if re.search(r'"[A-G][#b]?(m|maj|min|dim|aug|sus|7|9|add)?\d*"', music):
+    if chord_free and re.search(r'"[A-G][#b]?(m|maj|min|dim|aug|sus|7|9|add)?\d*"', music):
         problems.append("chord symbols found: cot=\"melody\" must be given a chord-free score")
 
     per_measure = _beats_per_measure(meter) * unit / 4.0  # one quarter beat = unit/4 of L:
@@ -476,24 +480,33 @@ def validate(abc: str, *, meter: str = "4/4", unit: int = UNIT) -> list[str]:
         if line.startswith("V:"):
             current = re.search(r"^V:\s*(\w+)", line).group(1)
             continue
-        if current == "Ins" and re.fullmatch(r"Z\d+\|", line.strip()):
-            continue  # a multi-measure rest covers the section by design
-        if current != "Vocal":
+        if ":" in line and line.split(":", 1)[0].strip() in headers:
+            continue  # a header field is not a music line
+        if current not in ("Vocal", "Ins"):
             continue
-        total = 0.0
-        for _text, length in _tokens(line):
-            total += length
-        if total and abs(total - per_measure) > 1e-6:
-            problems.append(
-                f"measure does not sum to {per_measure:g} L: units (got {total:g}): "
-                f"{line.strip()[:60]}"
-            )
+        if re.fullmatch(r"Z\d+\|", line.strip()):
+            continue  # a multi-measure rest covers the section by design
+        for index, measure in enumerate(line.split("|"), start=1):
+            total = sum(length for _text, length in _tokens(measure))
+            if total and abs(total - per_measure) > 1e-6:
+                problems.append(
+                    f"measure does not sum to {per_measure:g} L: units (got {total:g}) "
+                    f"[V: {current} measure {index}]: {measure.strip()[:60]}"
+                )
     return problems
 
 
+_QUOTED_RE = re.compile(r'"[^"]*"')
+
+
 def _tokens(line: str):
-    """Yield `(text, sixteenths)` for each note or rest in a measure line."""
-    body = line.split("|")[0]
+    """Yield `(text, sixteenths)` for each note or rest in a music line.
+
+    The whole line is read, not just the text before the first bar line. Quoted
+    spans are masked with spaces of the same length before matching: a chord label
+    is not melody, and masking keeps every onset after it where it was.
+    """
+    body = _QUOTED_RE.sub(lambda m: " " * len(m.group(0)), line)
     for m in re.finditer(r"([_=^]*(?:[A-G],*|[a-g]'*|z))([0-9]*/?[0-9]*)?", body):
         head, dur = m.group(1), m.group(2) or ""
         if head[-1] == "z":
